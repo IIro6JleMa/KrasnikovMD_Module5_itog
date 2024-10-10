@@ -1,0 +1,237 @@
+---
+- hosts: db_primary
+  become: yes
+  vars:
+    postgres_version: 15
+    db_name: 'db_emails_phones'
+    db_user: 'postgres'
+    db_password: 'maks'
+    replication_user: 'repl_user'
+    replication_password: 'maks'
+  tasks:
+    - name: Install PostgreSQL
+      apt:
+        name: 'postgresql-{{ postgres_version }}'
+        state: present
+      update_cache: yes
+
+    - name: Ensure PostgreSQL is started and enabled
+      service:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Configure postgresql.conf
+      lineinfile:
+        path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        regexp: '^#?(listen_addresses\s*=\s*).*'
+        line: "listen_addresses = '*'"
+        state: present
+
+    - name: Configure wal_level
+      lineinfile:
+        path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        regexp: '^#?(wal_level\s*=\s*).*'
+        line: "wal_level = replica"
+        state: present
+
+    - name: Configure max_wal_senders
+      lineinfile:
+        path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        regexp: '^#?(max_wal_senders\s*=\s*).*'
+        line: "max_wal_senders = 10"
+        state: present
+
+    - name: Configure hot_standby
+      lineinfile:
+        path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        regexp: '^#?(hot_standby\s*=\s*).*'
+        line: "hot_standby = on"
+        state: present
+
+    - name: Allow replication connections in pg_hba.conf
+      lineinfile:
+        path: "/etc/postgresql/{{ postgres_version }}/main/pg_hba.conf"
+        line: "host replication {{ replication_user }} 0.0.0.0/0 md5"
+        state: present
+
+    - name: Allow connections to database
+      lineinfile:
+        path: "/etc/postgresql/{{ postgres_version }}/main/pg_hba.conf"
+        line: "host    all             all             0.0.0.0/0               md5"
+        state: present
+
+    - name: Restart PostgreSQL
+      service:
+        name: postgresql
+        state: restarted
+
+    - name: Set postgres password
+      postgresql_user:
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+        login_user: postgres
+
+    - name: Create database
+      postgresql_db:
+        name: "{{ db_name }}"
+        owner: "{{ db_user }}"
+        encoding: UTF8
+        lc_collate: en_US.UTF-8
+        lc_ctype: en_US.UTF-8
+        template: template0
+        login_user: postgres
+
+    - name: Create replication user
+      postgresql_user:
+        name: "{{ replication_user }}"
+        password: "{{ replication_password }}"
+        role_attr_flags: "REPLICATION LOGIN"
+        login_user: postgres
+
+- hosts: db_replica
+  become: yes
+  vars:
+    postgres_version: 15
+    replication_user: 'repl_user'
+    replication_password: 'maks'
+    primary_db_host: '{{ hostvars["primary_db"]["ansible_host"] }}'
+  tasks:
+    - name: Install PostgreSQL
+      apt:
+        name: 'postgresql-{{ postgres_version }}'
+        state: present
+      update_cache: yes
+
+    - name: Stop PostgreSQL
+      service:
+        name: postgresql
+        state: stopped
+
+    - name: Remove old data directory
+      file:
+        path: "/var/lib/postgresql/{{ postgres_version }}/main"
+        state: absent
+        force: yes
+
+    - name: Perform base backup
+      shell: |
+        PGPASSWORD="{{ replication_password }}" pg_basebackup -h {{ primary_db_host }} -D /var/lib/postgresql/{{ postgres_version }}/main -U {{ replication_user }} -v -P --wal-method=stream
+      become_user: postgres
+
+    - name: Create standby.signal file
+      file:
+        path: "/var/lib/postgresql/{{ postgres_version }}/main/standby.signal"
+        state: touch
+        owner: postgres
+        group: postgres
+        mode: '0600'
+
+    - name: Configure primary_conninfo
+      lineinfile:
+        path: "/var/lib/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        regexp: '^#?(primary_conninfo\s*=\s*).*'
+        line: "primary_conninfo = 'host={{ primary_db_host }} port=5432 user={{ replication_user }} password={{ replication_password }}'"
+        state: present
+      owner: postgres
+      group: postgres
+
+    - name: Ensure hot_standby is on
+      lineinfile:
+        path: "/etc/postgresql/{{ postgres_version }}/main/postgresql.conf"
+        regexp: '^#?(hot_standby\s*=\s*).*'
+        line: "hot_standby = on"
+        state: present
+
+    - name: Start PostgreSQL
+      service:
+        name: postgresql
+        state: started
+        enabled: yes
+
+- hosts: bot_server
+  become: yes
+  vars:
+    bot_repo_url: 'https://github.com/IIro6JleMa/KrasnikovMD_Module5_itog/blob/main/bot_image/telegram_bot.py'
+    bot_directory: '/opt/telegram_bot'
+    bot_token: '7589100658:AAEY52cYKY0J81shl7LRMBJE_0qU_7PNiks'
+    db_host: '{{ hostvars["primary_db"]["ansible_host"] }}'
+    db_user: 'postgres'
+    db_password: 'maks'
+    db_database: 'db_emails_phones'
+    rm_host: '192.168.216.148'
+    rm_port: 22
+    rm_user: 'krasnikovmaksimdmitrievich'
+    rm_password: 'maks'
+  tasks:
+    - name: Install necessary packages
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - git
+          - virtualenv
+        state: present
+      update_cache: yes
+
+    - name: Clone bot repository
+      git:
+        repo: "{{ bot_repo_url }}"
+        dest: "{{ bot_directory }}"
+        version: ansible  # Укажите нужную ветку или тег
+
+    - name: Create virtual environment
+      pip:
+        virtualenv: "{{ bot_directory }}/venv"
+        virtualenv_python: python3
+        state: present
+
+    - name: Install Python dependencies
+      pip:
+        requirements: "{{ bot_directory }}/requirements.txt"
+        virtualenv: "{{ bot_directory }}/venv"
+
+    - name: Create environment variables file
+      copy:
+        dest: "{{ bot_directory }}/.env"
+        content: |
+          TOKEN={{ bot_token }}
+          DB_HOST={{ db_host }}
+          DB_USER={{ db_user }}
+          DB_PASSWORD={{ db_password }}
+          DB_DATABASE={{ db_database }}
+          RM_HOST={{ rm_host }}
+          RM_PORT={{ rm_port }}
+          RM_USER={{ rm_user }}
+          RM_PASSWORD={{ rm_password }}
+      mode: '0600'
+
+    - name: Create systemd service file for the bot
+      copy:
+        dest: /etc/systemd/system/telegram_bot.service
+        content: |
+          [Unit]
+          Description=Telegram Bot Service
+          After=network.target
+
+          [Service]
+          Type=simple
+          User={{ ansible_user }}
+          WorkingDirectory={{ bot_directory }}
+          EnvironmentFile={{ bot_directory }}/.env
+          ExecStart={{ bot_directory }}/venv/bin/python telegram_bot.py
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+      mode: '0644'
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Ensure telegram_bot service is started and enabled
+      systemd:
+        name: telegram_bot
+        state: started
+        enabled: yes

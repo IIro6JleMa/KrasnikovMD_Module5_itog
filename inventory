@@ -1,0 +1,12 @@
+[db_primary]
+primary_db ansible_host=192.168.216.148
+
+[db_replica]
+replica_db ansible_host=192.168.216.149
+
+[bot_server]
+bot_server ansible_host=192.168.216.150
+
+[all:vars]
+ansible_user=krasnikovmaksimdmitrievich
+ansible_ssh_pass=maks
