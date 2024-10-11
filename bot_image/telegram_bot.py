@@ -4,21 +4,33 @@ import logging
 import paramiko
 import psycopg2
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ConversationHandler,
+    ContextTypes,
+    filters,
+)
 
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG  # Установите уровень DEBUG для подробного логирования
+    level=logging.INFO  # Измените на DEBUG для подробного логирования
 )
 logger = logging.getLogger(__name__)
+
+# Состояния для ConversationHandler
+FIND_EMAIL, SAVE_EMAILS = range(2)
+FIND_PHONE, SAVE_PHONES = range(2)
+VERIFY_PASSWORD = 0
+APT_LIST, PACKAGE_INFO = range(2)
 
 class BotHandler:
     def __init__(self):
         # Инициализация бота и загрузка токена из переменных окружения
         self.token = os.environ.get('TOKEN')
-        self.updater = Updater(token=self.token, use_context=True)
-        self.dispatcher = self.updater.dispatcher
+        self.application = Application.builder().token(self.token).build()
 
         # Загрузка параметров SSH для удаленного подключения
         self.rm_host = os.environ.get('RM_HOST')
@@ -64,16 +76,16 @@ class BotHandler:
 
     def register_handlers(self):
         # Обработчики команд
-        self.dispatcher.add_handler(CommandHandler('start', self.start_command))
-        self.dispatcher.add_handler(CommandHandler('help', self.help_command))
-        self.dispatcher.add_handler(CommandHandler('cancel', self.cancel_command))
+        self.application.add_handler(CommandHandler('start', self.start_command))
+        self.application.add_handler(CommandHandler('help', self.help_command))
+        self.application.add_handler(CommandHandler('cancel', self.cancel_command))
 
         # Обработчики поиска информации в тексте
         find_email_conv = ConversationHandler(
             entry_points=[CommandHandler('find_email', self.find_email_command)],
             states={
-                'find_email': [MessageHandler(Filters.text & ~Filters.command, self.find_email_handler)],
-                'save_emails': [MessageHandler(Filters.text & ~Filters.command, self.save_emails_handler)],
+                FIND_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.find_email_handler)],
+                SAVE_EMAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.save_emails_handler)],
             },
             fallbacks=[CommandHandler('cancel', self.cancel_command)]
         )
@@ -81,66 +93,66 @@ class BotHandler:
         find_phone_conv = ConversationHandler(
             entry_points=[CommandHandler('find_phone', self.find_phone_command)],
             states={
-                'find_phone': [MessageHandler(Filters.text & ~Filters.command, self.find_phone_handler)],
-                'save_phones': [MessageHandler(Filters.text & ~Filters.command, self.save_phones_handler)],
+                FIND_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.find_phone_handler)],
+                SAVE_PHONES: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.save_phones_handler)],
             },
             fallbacks=[CommandHandler('cancel', self.cancel_command)]
         )
 
-        self.dispatcher.add_handler(find_email_conv)
-        self.dispatcher.add_handler(find_phone_conv)
+        self.application.add_handler(find_email_conv)
+        self.application.add_handler(find_phone_conv)
 
         # Обработчик проверки пароля
         verify_password_conv = ConversationHandler(
             entry_points=[CommandHandler('verify_password', self.verify_password_command)],
             states={
-                'verify_password': [MessageHandler(Filters.text & ~Filters.command, self.verify_password_handler)],
+                VERIFY_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.verify_password_handler)],
             },
             fallbacks=[CommandHandler('cancel', self.cancel_command)]
         )
-        self.dispatcher.add_handler(verify_password_conv)
+        self.application.add_handler(verify_password_conv)
 
         # Обработчики команд для мониторинга системы
-        self.dispatcher.add_handler(CommandHandler('get_release', self.get_release_command))
-        self.dispatcher.add_handler(CommandHandler('get_uname', self.get_uname_command))
-        self.dispatcher.add_handler(CommandHandler('get_uptime', self.get_uptime_command))
-        self.dispatcher.add_handler(CommandHandler('get_df', self.get_df_command))
-        self.dispatcher.add_handler(CommandHandler('get_free', self.get_free_command))
-        self.dispatcher.add_handler(CommandHandler('get_mpstat', self.get_mpstat_command))
-        self.dispatcher.add_handler(CommandHandler('get_w', self.get_w_command))
-        self.dispatcher.add_handler(CommandHandler('get_auths', self.get_auths_command))
-        self.dispatcher.add_handler(CommandHandler('get_critical', self.get_critical_command))
-        self.dispatcher.add_handler(CommandHandler('get_ps', self.get_ps_command))
-        self.dispatcher.add_handler(CommandHandler('get_ss', self.get_ss_command))
-        self.dispatcher.add_handler(CommandHandler('get_services', self.get_services_command))
-        self.dispatcher.add_handler(CommandHandler('get_repl_logs', self.get_repl_logs_command))
+        self.application.add_handler(CommandHandler('get_release', self.get_release_command))
+        self.application.add_handler(CommandHandler('get_uname', self.get_uname_command))
+        self.application.add_handler(CommandHandler('get_uptime', self.get_uptime_command))
+        self.application.add_handler(CommandHandler('get_df', self.get_df_command))
+        self.application.add_handler(CommandHandler('get_free', self.get_free_command))
+        self.application.add_handler(CommandHandler('get_mpstat', self.get_mpstat_command))
+        self.application.add_handler(CommandHandler('get_w', self.get_w_command))
+        self.application.add_handler(CommandHandler('get_auths', self.get_auths_command))
+        self.application.add_handler(CommandHandler('get_critical', self.get_critical_command))
+        self.application.add_handler(CommandHandler('get_ps', self.get_ps_command))
+        self.application.add_handler(CommandHandler('get_ss', self.get_ss_command))
+        self.application.add_handler(CommandHandler('get_services', self.get_services_command))
+        self.application.add_handler(CommandHandler('get_repl_logs', self.get_repl_logs_command))
 
         # Обработчики команд для работы с базой данных
-        self.dispatcher.add_handler(CommandHandler('get_emails', self.get_emails_command))
-        self.dispatcher.add_handler(CommandHandler('get_phone_numbers', self.get_phone_numbers_command))
+        self.application.add_handler(CommandHandler('get_emails', self.get_emails_command))
+        self.application.add_handler(CommandHandler('get_phone_numbers', self.get_phone_numbers_command))
 
         # Обработчики команд для работы с APT
         apt_list_conv = ConversationHandler(
             entry_points=[CommandHandler('get_apt_list', self.get_apt_list_command)],
             states={
-                'apt_list': [MessageHandler(Filters.text & ~Filters.command, self.get_apt_list_handler)],
-                'package_info': [MessageHandler(Filters.text & ~Filters.command, self.get_package_info_handler)],
+                APT_LIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_apt_list_handler)],
+                PACKAGE_INFO: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.get_package_info_handler)],
             },
             fallbacks=[CommandHandler('cancel', self.cancel_command)]
         )
-        self.dispatcher.add_handler(apt_list_conv)
-        self.dispatcher.add_handler(CommandHandler('get_all_packages', self.get_all_packages_command))
-        self.dispatcher.add_handler(CommandHandler('get_one_package', self.get_one_package_command))
+        self.application.add_handler(apt_list_conv)
+        self.application.add_handler(CommandHandler('get_all_packages', self.get_all_packages_command))
+        self.application.add_handler(CommandHandler('get_one_package', self.get_one_package_command))
 
         # Обработчик текстовых сообщений (эхо)
-        self.dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, self.echo_message))
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.echo_message))
 
     # Команды бота
 
-    def start_command(self, update: Update, context):
-        update.message.reply_text('Здравствуйте! Я ваш бот-помощник.', reply_markup=self.main_keyboard)
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text('Здравствуйте! Я ваш бот-помощник.', reply_markup=self.main_keyboard)
 
-    def help_command(self, update: Update, context):
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_text = (
             "Доступные команды:\n"
             "1. Поиск информации в тексте:\n"
@@ -167,49 +179,49 @@ class BotHandler:
             "4. Работа с пакетами APT:\n"
             " - Список пакетов: /get_apt_list\n"
         )
-        update.message.reply_text(help_text, reply_markup=self.main_keyboard)
+        await update.message.reply_text(help_text, reply_markup=self.main_keyboard)
 
-    def cancel_command(self, update: Update, context):
-        update.message.reply_text('Операция отменена.', reply_markup=self.main_keyboard)
+    async def cancel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text('Операция отменена.', reply_markup=self.main_keyboard)
         return ConversationHandler.END
 
     # Функции поиска информации в тексте
 
-    def find_email_command(self, update: Update, context):
-        update.message.reply_text('Введите текст для поиска email-адресов:', reply_markup=self.cancel_keyboard)
-        return 'find_email'
+    async def find_email_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text('Введите текст для поиска email-адресов:', reply_markup=self.cancel_keyboard)
+        return FIND_EMAIL
 
-    def find_email_handler(self, update: Update, context):
+    async def find_email_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text
         emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
         if emails:
             context.user_data['emails'] = emails  # Сохраняем найденные emails
             email_list = '\n'.join([f"{i + 1}. {email}" for i, email in enumerate(emails)])
-            update.message.reply_text(f'Найденные email-адреса:\n{email_list}', reply_markup=self.cancel_keyboard)
-            update.message.reply_text('Хотите сохранить эти email-адреса в базу данных? (Да/Нет)', reply_markup=self.cancel_keyboard)
-            return 'save_emails'
+            await update.message.reply_text(f'Найденные email-адреса:\n{email_list}', reply_markup=self.cancel_keyboard)
+            await update.message.reply_text('Хотите сохранить эти email-адреса в базу данных? (Да/Нет)', reply_markup=self.cancel_keyboard)
+            return SAVE_EMAILS
         else:
-            update.message.reply_text('Email-адреса не найдены.', reply_markup=self.main_keyboard)
+            await update.message.reply_text('Email-адреса не найдены.', reply_markup=self.main_keyboard)
             return ConversationHandler.END
 
-    def save_emails_handler(self, update: Update, context):
+    async def save_emails_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = update.message.text.strip().lower()
         if response == 'да':
             emails = context.user_data.get('emails', [])
             success = self.save_to_database('emails', emails)
             if success:
-                update.message.reply_text('Email-адреса успешно сохранены.', reply_markup=self.main_keyboard)
+                await update.message.reply_text('Email-адреса успешно сохранены.', reply_markup=self.main_keyboard)
             else:
-                update.message.reply_text('Произошла ошибка при сохранении email-адресов.', reply_markup=self.main_keyboard)
+                await update.message.reply_text('Произошла ошибка при сохранении email-адресов.', reply_markup=self.main_keyboard)
         else:
-            update.message.reply_text('Сохранение отменено.', reply_markup=self.main_keyboard)
+            await update.message.reply_text('Сохранение отменено.', reply_markup=self.main_keyboard)
         return ConversationHandler.END
 
-    def find_phone_command(self, update: Update, context):
-        update.message.reply_text('Введите текст для поиска номеров телефонов:', reply_markup=self.cancel_keyboard)
-        return 'find_phone'
+    async def find_phone_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text('Введите текст для поиска номеров телефонов:', reply_markup=self.cancel_keyboard)
+        return FIND_PHONE
 
-    def find_phone_handler(self, update: Update, context):
+    async def find_phone_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text
         phone_pattern = r'(?:\+?\d{1,3})?\s*[\(\-]?\d{1,4}[\)\-]?\s*\d{1,4}(?:[\s\-]*\d{2,4}){1,3}'
         phones = re.findall(phone_pattern, text)
@@ -217,37 +229,37 @@ class BotHandler:
         if phones:
             context.user_data['phones'] = phones  # Сохраняем найденные номера
             phone_list = '\n'.join([f"{i + 1}. {phone}" for i, phone in enumerate(phones)])
-            update.message.reply_text(f'Найденные номера телефонов:\n{phone_list}', reply_markup=self.cancel_keyboard)
-            update.message.reply_text('Хотите сохранить эти номера телефонов в базу данных? (Да/Нет)', reply_markup=self.cancel_keyboard)
-            return 'save_phones'
+            await update.message.reply_text(f'Найденные номера телефонов:\n{phone_list}', reply_markup=self.cancel_keyboard)
+            await update.message.reply_text('Хотите сохранить эти номера телефонов в базу данных? (Да/Нет)', reply_markup=self.cancel_keyboard)
+            return SAVE_PHONES
         else:
-            update.message.reply_text('Телефонные номера не найдены.', reply_markup=self.main_keyboard)
+            await update.message.reply_text('Телефонные номера не найдены.', reply_markup=self.main_keyboard)
             return ConversationHandler.END
 
-    def save_phones_handler(self, update: Update, context):
+    async def save_phones_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = update.message.text.strip().lower()
         if response == 'да':
             phones = context.user_data.get('phones', [])
             success = self.save_to_database('phones', phones)
             if success:
-                update.message.reply_text('Номера телефонов успешно сохранены.', reply_markup=self.main_keyboard)
+                await update.message.reply_text('Номера телефонов успешно сохранены.', reply_markup=self.main_keyboard)
             else:
-                update.message.reply_text('Произошла ошибка при сохранении номеров телефонов.', reply_markup=self.main_keyboard)
+                await update.message.reply_text('Произошла ошибка при сохранении номеров телефонов.', reply_markup=self.main_keyboard)
         else:
-            update.message.reply_text('Сохранение отменено.', reply_markup=self.main_keyboard)
+            await update.message.reply_text('Сохранение отменено.', reply_markup=self.main_keyboard)
         return ConversationHandler.END
 
-    def verify_password_command(self, update: Update, context):
-        update.message.reply_text('Введите пароль для проверки:', reply_markup=self.cancel_keyboard)
-        return 'verify_password'
+    async def verify_password_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text('Введите пароль для проверки:', reply_markup=self.cancel_keyboard)
+        return VERIFY_PASSWORD
 
-    def verify_password_handler(self, update: Update, context):
+    async def verify_password_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         password = update.message.text
         pattern = r'^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%*#?&]).{8,}$'
         if re.match(pattern, password):
-            update.message.reply_text('Пароль сложный.', reply_markup=self.main_keyboard)
+            await update.message.reply_text('Пароль сложный.', reply_markup=self.main_keyboard)
         else:
-            update.message.reply_text('Пароль простой.', reply_markup=self.main_keyboard)
+            await update.message.reply_text('Пароль простой.', reply_markup=self.main_keyboard)
         return ConversationHandler.END
 
     # Функции для мониторинга Linux-системы
@@ -266,150 +278,97 @@ class BotHandler:
             logger.debug(f'Command output: {output}')
             logger.debug(f'Command error: {error}')
 
-            if error:
+            if error and not output:
                 logger.error(f'Ошибка при выполнении команды на удаленном сервере: {error}')
                 return None
-            return output
+            return output if output else error
         except Exception as e:
             logger.error(f'Ошибка при подключении по SSH: {e}')
             return None
 
-    def send_host_info(self, update: Update, context, command, data=None):
+    async def send_host_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE, command, data=None):
         if not data:
             data = self.get_host_info(command)
         if not data:
-            update.message.reply_text('Не удалось получить данные.', reply_markup=self.main_keyboard)
+            await update.message.reply_text('Не удалось получить данные.', reply_markup=self.main_keyboard)
             return
         try:
-            update.message.reply_text(data, reply_markup=self.main_keyboard)
-        except Exception as e:
-            max_length = 4096
+            max_length = 4000  # Telegram ограничивает сообщения 4096 символами
             for i in range(0, len(data), max_length):
-                update.message.reply_text(data[i:i+max_length])
-            update.message.reply_text('Данные слишком длинные, вывод разделен.', reply_markup=self.main_keyboard)
+                await update.message.reply_text(data[i:i+max_length], reply_markup=self.main_keyboard)
+        except Exception as e:
+            logger.error(f'Ошибка при отправке сообщения: {e}')
+            await update.message.reply_text('Произошла ошибка при отправке данных.', reply_markup=self.main_keyboard)
 
-    def get_release_command(self, update: Update, context):
-        self.send_host_info(update, context, 'lsb_release -a')
+    async def get_release_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'lsb_release -a')
 
-    def get_uname_command(self, update: Update, context):
-        self.send_host_info(update, context, 'uname -nmr')
+    async def get_uname_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'uname -nmr')
 
-    def get_uptime_command(self, update: Update, context):
-        self.send_host_info(update, context, 'uptime')
+    async def get_uptime_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'uptime')
 
-    def get_df_command(self, update: Update, context):
-        self.send_host_info(update, context, 'df -h')
+    async def get_df_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'df -h')
 
-    def get_free_command(self, update: Update, context):
-        self.send_host_info(update, context, 'free -h')
+    async def get_free_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'free -h')
 
-    def get_mpstat_command(self, update: Update, context):
-        self.send_host_info(update, context, 'mpstat -P ALL 1 1')
+    async def get_mpstat_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'mpstat -P ALL 1 1')
 
-    def get_w_command(self, update: Update, context):
-        self.send_host_info(update, context, 'w')
+    async def get_w_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'w')
 
-    def get_auths_command(self, update: Update, context):
-        self.send_host_info(update, context, 'last -n 10')
+    async def get_auths_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'last -n 10')
 
-    def get_critical_command(self, update: Update, context):
-        data = self.get_host_info("journalctl -p crit -n 5 | grep -E '^[A-Za-z]{3} [0-9]{2}'")
-        self.send_host_info(update, context, None, data)
+    async def get_critical_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        data = self.get_host_info("journalctl -p crit -n 5")
+        await self.send_host_info(update, context, None, data)
 
-    def get_ps_command(self, update: Update, context):
-        self.send_host_info(update, context, 'ps aux')
+    async def get_ps_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'ps aux')
 
-    def get_ss_command(self, update: Update, context):
-        self.send_host_info(update, context, 'ss -tuln')
+    async def get_ss_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'ss -tuln')
 
-    def get_services_command(self, update: Update, context):
-        self.send_host_info(update, context, 'systemctl list-units --type=service --state=running')
+    async def get_services_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self.send_host_info(update, context, 'systemctl list-units --type=service --state=running')
 
     # Команда для получения логов репликации PostgreSQL
 
-    def get_repl_logs_command(self, update: Update, context):
+    async def get_repl_logs_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
-            container_name = 'postgres_db'  # Замените на фактическое имя или ID контейнера
-
-            command = f'docker exec {container_name} sh -c "grep \'replication\' /var/log/postgresql/postgresql-*.log | tail -n 15"'
+            command = "grep 'standby\\|replication' /var/log/postgresql/postgresql-*.log | tail -n 10"
             data = self.get_host_info(command)
             if data:
                 logger.info(f"Полученные логи:\n{data}")
-                extracted_info = self.extract_replication_info(data)
-                if extracted_info:
-                    update.message.reply_text(f"Информация о репликации:\n{extracted_info}", reply_markup=self.main_keyboard)
-                else:
-                    update.message.reply_text('Не удалось извлечь информацию о репликации. Проверьте логи бота для подробностей.', reply_markup=self.main_keyboard)
-                    logger.info(f"Извлеченная информация о репликации:\n{extracted_info}")
+                await update.message.reply_text(f"Логи репликации:\n{data}", reply_markup=self.main_keyboard)
             else:
-                update.message.reply_text('Логи репликации не найдены или отсутствуют.', reply_markup=self.main_keyboard)
+                await update.message.reply_text('Логи репликации не найдены или отсутствуют.', reply_markup=self.main_keyboard)
         except Exception as e:
             logger.error(f'Ошибка при получении логов репликации: {e}')
-            update.message.reply_text(f'Произошла ошибка при получении логов репликации.\nОшибка: {e}', reply_markup=self.main_keyboard)
-
-    def extract_replication_info(self, log_data):
-        pattern = r'''
-            ^(?P<filename>/var/log/postgresql/postgresql-[^:]+):      # Имя файла
-            (?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+
-            (?P<timezone>[A-Z]+)\s+
-            \[(?P<pid>\d+)\]\s+
-            (?P<level>\w+):\s+
-            (?P<message>.+)
-        '''
-        regex = re.compile(pattern, re.VERBOSE)
-        lines = log_data.strip().split('\n')
-        extracted_entries = []
-        total_lines = len(lines)
-        parsed_lines = 0
-
-        for line in lines:
-            match = regex.match(line)
-            if match:
-                filename = match.group('filename')
-                timestamp = match.group('timestamp')
-                timezone = match.group('timezone')
-                pid = match.group('pid')
-                level = match.group('level')
-                message = match.group('message').strip()
-
-                logger.debug(f"Обработанная строка лога: filename={filename}, timestamp={timestamp}, timezone={timezone}, pid={pid}, level={level}, message={message}")
-
-                entry = (
-                    f"Файл: {filename}\n"
-                    f"Время: {timestamp} {timezone}\n"
-                    f"PID: {pid}\n"
-                    f"Уровень: {level}\n"
-                    f"Сообщение: {message}\n"
-                )
-                extracted_entries.append(entry)
-                parsed_lines += 1
-            else:
-                logger.warning(f"Не удалось распарсить строку: {line}")
-
-        logger.info(f"Всего строк: {total_lines}, успешно распарсено: {parsed_lines}")
-
-        if extracted_entries:
-            return '\n\n'.join(extracted_entries)
-        else:
-            return None
+            await update.message.reply_text(f'Произошла ошибка при получении логов репликации.\nОшибка: {e}', reply_markup=self.main_keyboard)
 
     # Работа с базой данных
 
-    def get_emails_command(self, update: Update, context):
+    async def get_emails_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         emails = self.fetch_from_database('emails')
         if emails:
             email_list = '\n'.join([f"{i + 1}. {email}" for i, email in enumerate(emails)])
-            update.message.reply_text(f'Сохраненные email-адреса:\n{email_list}', reply_markup=self.main_keyboard)
+            await update.message.reply_text(f'Сохраненные email-адреса:\n{email_list}', reply_markup=self.main_keyboard)
         else:
-            update.message.reply_text('Нет сохраненных email-адресов.', reply_markup=self.main_keyboard)
+            await update.message.reply_text('Нет сохраненных email-адресов.', reply_markup=self.main_keyboard)
 
-    def get_phone_numbers_command(self, update: Update, context):
+    async def get_phone_numbers_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         phones = self.fetch_from_database('phones')
         if phones:
             phone_list = '\n'.join([f"{i + 1}. {phone}" for i, phone in enumerate(phones)])
-            update.message.reply_text(f'Сохраненные номера телефонов:\n{phone_list}', reply_markup=self.main_keyboard)
+            await update.message.reply_text(f'Сохраненные номера телефонов:\n{phone_list}', reply_markup=self.main_keyboard)
         else:
-            update.message.reply_text('Нет сохраненных номеров телефонов.', reply_markup=self.main_keyboard)
+            await update.message.reply_text('Нет сохраненных номеров телефонов.', reply_markup=self.main_keyboard)
 
     def save_to_database(self, table_name, data_list):
         try:
@@ -464,52 +423,51 @@ class BotHandler:
 
     # Работа с пакетами APT
 
-    def get_apt_list_command(self, update: Update, context):
-        update.message.reply_text('Выберите опцию:', reply_markup=self.apt_keyboard)
-        return 'apt_list'
+    async def get_apt_list_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text('Выберите опцию:', reply_markup=self.apt_keyboard)
+        return APT_LIST
 
-    def get_apt_list_handler(self, update: Update, context):
+    async def get_apt_list_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text
         if text == '/get_all_packages':
-            self.get_all_packages_command(update, context)
+            await self.get_all_packages_command(update, context)
             return ConversationHandler.END
         elif text == '/get_one_package':
-            update.message.reply_text('Введите название пакета:', reply_markup=self.cancel_keyboard)
-            return 'package_info'
+            await update.message.reply_text('Введите название пакета:', reply_markup=self.cancel_keyboard)
+            return PACKAGE_INFO
         else:
-            update.message.reply_text('Неверная опция.', reply_markup=self.cancel_keyboard)
-            return 'apt_list'
+            await update.message.reply_text('Неверная опция.', reply_markup=self.cancel_keyboard)
+            return APT_LIST
 
-    def get_all_packages_command(self, update: Update, context):
+    async def get_all_packages_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = self.get_host_info('dpkg -l')
         if data:
             packages = re.findall(r'^ii\s+([^\s]+)', data, re.MULTILINE)
             package_list = '\n'.join(packages)
-            self.send_host_info(update, context, None, package_list)
+            await self.send_host_info(update, context, None, package_list)
         else:
-            update.message.reply_text('Не удалось получить список пакетов.', reply_markup=self.main_keyboard)
+            await update.message.reply_text('Не удалось получить список пакетов.', reply_markup=self.main_keyboard)
         return ConversationHandler.END
 
-    def get_one_package_command(self, update: Update, context):
-        update.message.reply_text('Введите название пакета:', reply_markup=self.cancel_keyboard)
-        return 'package_info'
+    async def get_one_package_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text('Введите название пакета:', reply_markup=self.cancel_keyboard)
+        return PACKAGE_INFO
 
-    def get_package_info_handler(self, update: Update, context):
+    async def get_package_info_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         package_name = update.message.text.strip()
         data = self.get_host_info(f'dpkg -s {package_name}')
-        self.send_host_info(update, context, None, data)
+        await self.send_host_info(update, context, None, data)
         return ConversationHandler.END
 
     # Обработчик текстовых сообщений (эхо)
 
-    def echo_message(self, update: Update, context):
-        update.message.reply_text(update.message.text, reply_markup=self.main_keyboard)
+    async def echo_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text(update.message.text, reply_markup=self.main_keyboard)
 
     # Запуск бота
 
     def run(self):
-        self.updater.start_polling()
-        self.updater.idle()
+        self.application.run_polling()
 
 if __name__ == '__main__':
     bot = BotHandler()
