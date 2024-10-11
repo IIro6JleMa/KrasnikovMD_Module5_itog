@@ -3,13 +3,13 @@ import re
 import logging
 import paramiko
 import psycopg2
-from telegram import Update, Bot, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler
 
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG  # Установите уровень DEBUG для подробного логирования
+    level=logging.DEBUG  
 )
 logger = logging.getLogger(__name__)
 
@@ -331,7 +331,7 @@ class BotHandler:
         try:
             container_name = 'postgres_db'  # Замените на фактическое имя или ID контейнера
 
-            command = f"docker exec {container_name} sh -c \"grep 'replication' /var/log/postgresql/postgresql-*.log | tail -n 10\""
+            command = f'docker exec {container_name} sh -c "grep \'replication\' /var/log/postgresql/postgresql-*.log | tail -n 15"'
             data = self.get_host_info(command)
             if data:
                 logger.info(f"Полученные логи:\n{data}")
@@ -510,7 +510,6 @@ class BotHandler:
     def run(self):
         self.updater.start_polling()
         self.updater.idle()
-
 
 if __name__ == '__main__':
     bot = BotHandler()
