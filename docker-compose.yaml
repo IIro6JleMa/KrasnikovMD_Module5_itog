@@ -40,7 +40,8 @@ services:
         -c log_disconnections=on \
         -c log_replication_commands=on \
         -c max_connections=100 \
-        -c shared_buffers=128MB"
+        -c shared_buffers=128MB &&
+      chmod 666 /var/log/postgresql/postgresql-*.log"
 
   bot:
     build:
